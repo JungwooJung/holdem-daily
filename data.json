@@ -1,0 +1,9 @@
+{
+  "games": [],
+  "ranking_rules": {
+    "rank_points": { "1": 10, "2": 6, "3": 3 },
+    "first_buyin": 1,
+    "participation": 1
+  },
+  "point_adjustments": []
+}
