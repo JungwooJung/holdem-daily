@@ -1,29 +1,31 @@
-# Streamlit 기반 홀덤 데일리 포인트 & 승점 랭킹 시스템 (완성본)
-# 설정 / 운영 / 보정 / 조회 / 엑셀 다운로드 포함
+# holdem-daily Streamlit App (최종 수정본)
 
 import streamlit as st
-import json
-from datetime import date
 import pandas as pd
+import json
+import os
+from datetime import datetime, date
+
+st.set_page_config(page_title="홀덤 데일리", layout="wide")
 
 DATA_FILE = "data.json"
-ADMIN_PASSWORD = "admin"
+ADMIN_PASSWORD = "admin123"  # 반드시 변경하세요
 
-# -------------------- 데이터 로드/저장 --------------------
+# ------------------ 데이터 로드/저장 ------------------
+
 def load_data():
-    try:
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
+    if not os.path.exists(DATA_FILE):
         return {
             "games": [],
             "ranking_rules": {
                 "rank_points": {"1": 10, "2": 6, "3": 3},
                 "first_buyin": 1,
-                "participation": 1
+                "last_buyin": 1
             },
             "point_adjustments": []
         }
+    with open(DATA_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def save_data(data):
@@ -33,174 +35,136 @@ def save_data(data):
 
 data = load_data()
 
-st.set_page_config(page_title="홀덤 데일리 관리", layout="wide")
-st.title("🃏 홀덤 데일리 포인트 & 승점 랭킹 시스템")
+# ------------------ 사이드바 메뉴 ------------------
 
-menu = st.sidebar.radio("메뉴", ["설정 (관리자)", "운영 (게임 입력)", "포인트 보정", "랭킹 / 조회", "게임별 상세 로그", "플레이어 전적"])("메뉴", ["설정 (관리자)", "운영 (게임 입력)", "포인트 보정", "랭킹 / 조회", "게임별 상세 로그"])
+menu = st.sidebar.radio(
+    "메뉴",
+    [
+        "설정 (관리자)",
+        "운영 (게임 입력)",
+        "포인트 보정",
+        "랭킹 / 조회",
+        "게임별 상세 로그",
+        "플레이어 전적"
+    ]
+)
 
-# -------------------- 설정 영역 --------------------
+# ------------------ 설정 (관리자) ------------------
+
 if menu == "설정 (관리자)":
-    st.header("🔧 승점 설정")
+    st.header("⚙️ 승점 설정 (관리자)")
     pw = st.text_input("관리자 비밀번호", type="password")
     if pw != ADMIN_PASSWORD:
-        st.warning("비밀번호 필요")
-    else:
-        rules = data["ranking_rules"]
-        st.subheader("등수별 승점")
-        for r in [1, 2, 3]:
-            rules["rank_points"][str(r)] = st.number_input(f"{r}등 승점", value=rules["rank_points"].get(str(r), 0))
-        st.subheader("기타 승점")
-        rules["first_buyin"] = st.number_input("첫 바이인 승점", value=rules.get("first_buyin", 0))
-        rules["participation"] = st.number_input("참가 승점", value=rules.get("participation", 0))
-        if st.button("💾 설정 저장"):
-            save_data(data)
-            st.success("저장 완료")
+        st.warning("비밀번호를 입력하세요")
+        st.stop()
 
-# -------------------- 운영 영역 --------------------
+    st.subheader("등수별 승점")
+    ranks = {}
+    for i in range(1, 6):
+        ranks[str(i)] = st.number_input(f"{i}등 승점", value=int(data["ranking_rules"]["rank_points"].get(str(i), 0)))
+
+    first_buyin = st.number_input("첫 게임 바이인 승점", value=data["ranking_rules"].get("first_buyin", 0))
+    last_buyin = st.number_input("마지막 게임 바이인 승점", value=data["ranking_rules"].get("last_buyin", 0))
+
+    if st.button("저장"):
+        data["ranking_rules"] = {
+            "rank_points": ranks,
+            "first_buyin": first_buyin,
+            "last_buyin": last_buyin
+        }
+        save_data(data)
+        st.success("저장 완료")
+
+# ------------------ 운영 (게임 입력) ------------------
+
 elif menu == "운영 (게임 입력)":
     st.header("🎮 게임 입력")
     game_name = st.text_input("게임명")
     game_date = st.date_input("게임 날짜", value=date.today())
-    players = []
-    for i in range(1, 7):
-        with st.expander(f"플레이어 {i}"):
-            nick = st.text_input("닉네임", key=f"n{i}")
-            buyin = st.number_input("바이인", min_value=0, key=f"b{i}")
-            rebuy = st.number_input("리바이", min_value=0, key=f"r{i}")
-            cashout = st.number_input("캐시아웃", min_value=0, key=f"c{i}")
-            rank = st.number_input("등수", min_value=1, key=f"rk{i}")
-            if nick:
-                players.append({"nickname": nick, "buyin": buyin, "rebuy": rebuy, "cashout": cashout, "rank": rank})
-    if st.button("➕ 게임 저장") and players:
-        data["games"].append({"name": game_name, "date": str(game_date), "players": players})
+
+    players = st.text_area("참가자 입력 (닉네임, 등수 / 줄바꿈)", placeholder="예:\n철수,1\n영희,2")
+
+    if st.button("게임 저장"):
+        game = {
+            "id": len(data["games"]) + 1,
+            "name": game_name,
+            "date": str(game_date),
+            "players": []
+        }
+        for line in players.split("\n"):
+            if "," in line:
+                nick, rank = line.split(",")
+                game["players"].append({
+                    "nickname": nick.strip(),
+                    "rank": rank.strip()
+                })
+        data["games"].append(game)
         save_data(data)
         st.success("게임 저장 완료")
 
-    st.subheader("🗑 게임 삭제")
-    for idx, g in enumerate(data["games"]):
-        if st.button(f"삭제: {g['name']} ({g['date']})", key=f"del{idx}"):
-            data["games"].pop(idx)
-            save_data(data)
-            st.experimental_rerun()
+# ------------------ 포인트 보정 ------------------
 
-# -------------------- 포인트 보정 --------------------
 elif menu == "포인트 보정":
     st.header("➕➖ 포인트 보정")
     nick = st.text_input("닉네임")
-    amount = st.number_input("포인트 (+/-)")
+    point = st.number_input("포인트", step=1)
     reason = st.text_input("사유")
-    adate = st.date_input("보정 날짜", value=date.today())
+
     if st.button("보정 저장"):
-        data["point_adjustments"].append({"nickname": nick, "amount": amount, "reason": reason, "date": str(adate)})
+        data["point_adjustments"].append({
+            "nickname": nick,
+            "point": point,
+            "reason": reason,
+            "date": str(date.today())
+        })
         save_data(data)
-        st.success("보정 반영 완료")
+        st.success("저장 완료")
 
-    st.subheader("보정 내역")
-    st.table(data["point_adjustments"])
+# ------------------ 랭킹 / 조회 ------------------
 
-# -------------------- 랭킹 / 조회 --------------------
 elif menu == "랭킹 / 조회":
-    st.header("🏆 랭킹 / 조회")
-    c1, c2 = st.columns(2)
-    with c1:
-        start = st.date_input("시작일")
-    with c2:
-        end = st.date_input("종료일")
-
-    rules = data["ranking_rules"]
-    point, score = {}, {}
+    st.header("🏆 랭킹")
+    scores = {}
 
     for g in data["games"]:
-        gdate = date.fromisoformat(g["date"])
-        if not (start <= gdate <= end):
-            continue
         for p in g["players"]:
             nick = p["nickname"]
-            net = p["cashout"] - (p["buyin"] * (1 + p["rebuy"]))
-            point[nick] = point.get(nick, 0) + net
-            s = rules["rank_points"].get(str(p["rank"]), 0)
-            if p["rebuy"] == 0:
-                s += rules.get("first_buyin", 0)
-            s += rules.get("participation", 0)
-            score[nick] = score.get(nick, 0) + s
+            rank = p["rank"]
+            scores.setdefault(nick, 0)
+            scores[nick] += data["ranking_rules"]["rank_points"].get(rank, 0)
 
-    for a in data["point_adjustments"]:
-        ad = date.fromisoformat(a["date"])
-        if start <= ad <= end:
-            point[a["nickname"]] = point.get(a["nickname"], 0) + a["amount"]
+    for adj in data["point_adjustments"]:
+        scores.setdefault(adj["nickname"], 0)
+        scores[adj["nickname"]] += adj["point"]
 
-    df_point = pd.DataFrame(sorted(point.items(), key=lambda x: x[1], reverse=True), columns=["닉네임", "포인트"])
-    df_score = pd.DataFrame(sorted(score.items(), key=lambda x: x[1], reverse=True), columns=["닉네임", "승점"])
+    df = pd.DataFrame(scores.items(), columns=["닉네임", "포인트"]).sort_values(by="포인트", ascending=False)
+    st.dataframe(df, use_container_width=True)
 
-    st.subheader("누적 포인트 랭킹")
-    st.dataframe(df_point)
-    st.download_button("📥 포인트 엑셀 다운로드", df_point.to_excel(index=False), file_name="point.xlsx")
+# ------------------ 게임별 상세 로그 ------------------
 
-    st.subheader("승점 랭킹")
-    st.dataframe(df_score)
-    st.download_button("📥 승점 엑셀 다운로드", df_score.to_excel(index=False), file_name="score.xlsx")
-
-# -------------------- 게임별 상세 로그 --------------------
 elif menu == "게임별 상세 로그":
-    st.header("📊 게임별 상세 로그")
+    st.header("📜 게임 로그")
+    for g in data["games"]:
+        st.subheader(f"{g['name']} ({g['date']})")
+        st.table(pd.DataFrame(g["players"]))
 
-    if not data["games"]:
-        st.info("등록된 게임이 없습니다")
-    else:
-        game_options = [f"{i+1}. {g['name']} ({g['date']})" for i, g in enumerate(data["games"])]
-        sel = st.selectbox("게임 선택", game_options)
-        idx = game_options.index(sel)
-        game = data["games"][idx]
+# ------------------ 플레이어 전적 ------------------
 
-        st.subheader(f"🃏 {game['name']} / {game['date']}")
-        rules = data["ranking_rules"]
-        rows = []
-        for p in game["players"]:
-            net = p["cashout"] - (p["buyin"] * (1 + p["rebuy"]))
-            score = rules["rank_points"].get(str(p["rank"]), 0)
-            if p["rebuy"] == 0:
-                score += rules.get("first_buyin", 0)
-            score += rules.get("participation", 0)
-            rows.append({"닉네임": p["nickname"], "등수": p["rank"], "바이인": p["buyin"], "리바이": p["rebuy"], "캐시아웃": p["cashout"], "게임 포인트": net, "획득 승점": score})
-        df = pd.DataFrame(rows).sort_values("등수")
-        st.dataframe(df, use_container_width=True)
-
-# -------------------- 플레이어 전적 --------------------
 elif menu == "플레이어 전적":
-    st.header("👤 플레이어 개인 전적")
+    st.header("👤 플레이어 전적")
+    nick = st.selectbox(
+        "닉네임 선택",
+        sorted({p["nickname"] for g in data["games"] for p in g["players"]})
+    )
 
-    players = sorted({p['nickname'] for g in data['games'] for p in g['players']})
-    if not players:
-        st.info("플레이어 기록이 없습니다")
-    else:
-        sel = st.selectbox("닉네임 선택", players)
-        rules = data["ranking_rules"]
-        rows = []
-        total_point, total_score, games_cnt = 0, 0, 0
-
-        for g in data['games']:
-            for p in g['players']:
-                if p['nickname'] != sel:
-                    continue
-                games_cnt += 1
-                net = p['cashout'] - (p['buyin'] * (1 + p['rebuy']))
-                score = rules['rank_points'].get(str(p['rank']), 0)
-                if p['rebuy'] == 0:
-                    score += rules.get('first_buyin', 0)
-                score += rules.get('participation', 0)
-                total_point += net
-                total_score += score
-                rows.append({
-                    "날짜": g['date'],
-                    "게임명": g['name'],
-                    "등수": p['rank'],
-                    "게임 포인트": net,
-                    "획득 승점": score
+    records = []
+    for g in data["games"]:
+        for p in g["players"]:
+            if p["nickname"] == nick:
+                records.append({
+                    "게임": g["name"],
+                    "날짜": g["date"],
+                    "등수": p["rank"]
                 })
 
-        st.metric("총 게임 수", games_cnt)
-        st.metric("누적 포인트", total_point)
-        st.metric("누적 승점", total_score)
-
-        df = pd.DataFrame(rows)
-        st.dataframe(df, use_container_width=True)
+    st.dataframe(pd.DataFrame(records), use_container_width=True)
